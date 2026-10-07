@@ -1,0 +1,41 @@
+# Render Blueprint. Deploy: Render Dashboard -> New -> Blueprint -> select this repo.
+# One instance only: Telegram long polling and the SQLite DB on the disk require it.
+services:
+  - type: worker
+    name: tradegenius
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Wine + one MT5 terminal needs ~400-600 MB; "standard" (2 GB) fits ~3 accounts.
+    plan: standard
+    autoDeploy: true
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: AI_DAILY_LIMIT
+        value: "20"
+      - key: BILLING_ENABLED
+        value: "false"
+      - key: ALLOWED_USER_IDS
+        sync: false
+      - key: MAX_ACTIVE_ENGINES
+        value: "3"
+      - key: MAX_ACCOUNTS_PER_USER
+        value: "1"
+      - key: PAYMENT_PROVIDER_TOKEN
+        sync: false
+      - key: PRICE_AMOUNT
+        value: "3900"
+      - key: PRICE_CURRENCY
+        value: USD

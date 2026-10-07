@@ -1,0 +1,5 @@
+# Windows Python inside Wine (trading engine)
+MetaTrader5>=5.0.45
+pandas>=2.1,<3
+numpy>=1.26,<2.3
+requests>=2.31,<3

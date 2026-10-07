@@ -1,0 +1,3 @@
+# Linux side (bot + supervisor)
+requests>=2.31,<3
+cryptography>=42
