@@ -78,3 +78,31 @@ def test_pip_size():
     assert pip_size(0.001, 3) == 0.01
     assert pip_size(0.01, 2) == 0.1
     assert pip_size(1.0, 0) == 1.0
+
+
+def test_adx_strong_trend_high_and_flat_market_low():
+    from tradegenius.shared.indicators import adx
+    n = 300
+    trend = pd.DataFrame({"close": np.linspace(1.0, 1.3, n)})
+    trend["high"], trend["low"] = trend["close"] + 0.001, trend["close"] - 0.001
+    trend["open"] = trend["close"]
+    rng = np.random.default_rng(3)
+    flat = pd.DataFrame({"close": 1.1 + rng.normal(0, 0.0005, n)})
+    flat["high"], flat["low"] = flat["close"] + 0.001, flat["close"] - 0.001
+    flat["open"] = flat["close"]
+    t, f = adx(trend, 14), adx(flat, 14)
+    assert t["adx"].iloc[:28].isna().all()
+    assert t["adx"].iloc[-1] > 50 and t["plus_di"].iloc[-1] > t["minus_di"].iloc[-1]
+    assert f["adx"].iloc[-1] < 30
+    v = f["adx"].dropna()
+    assert ((v >= 0) & (v <= 100)).all()
+
+
+def test_adx_operand_validates_and_describes():
+    from tradegenius.shared.strategy_schema import describe_condition
+    s = strat([{"left": {"ind": "ADX", "period": 14}, "op": ">", "right": 20}])
+    c = s["entry"]["buy"][0]
+    assert c["left"] == {"ind": "ADX", "period": 14, "line": "adx"}
+    assert describe_condition(c).startswith("ADX(14)")
+    df = compute_indicators(frame(np.linspace(1, 1.2, 200)), s)
+    assert "ADX_14_adx" in df.columns

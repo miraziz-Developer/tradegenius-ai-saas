@@ -67,3 +67,14 @@ def test_ini_created_when_missing(tmp_path):
 
 def test_to_win():
     assert to_win("/data/clients/acc_3/terminal64.exe") == r"Z:\data\clients\acc_3\terminal64.exe"
+
+
+def test_engine_env_never_leaks_secrets():
+    from tradegenius.worker_manager import engine_env
+    environ = {"PATH": "p", "SYSTEMROOT": r"C:\Windows", "ENCRYPTION_KEY": "k", "GEMINI_API_KEY": "g",
+               "WINEPREFIX": "/w"}
+    native = cfg(wine_cmd=[])
+    wine = cfg(wine_cmd=["wine"])
+    n, w = engine_env(native, environ), engine_env(wine, environ)
+    assert "SYSTEMROOT" in n and "ENCRYPTION_KEY" not in n and "GEMINI_API_KEY" not in n
+    assert set(w) == {"PATH", "WINEPREFIX"}

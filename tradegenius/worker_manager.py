@@ -33,6 +33,24 @@ PASSTHROUGH_ENV = ("PATH", "HOME", "LANG", "WINEPREFIX", "WINEDEBUG", "WINEARCH"
                    "WINEDLLOVERRIDES", "XDG_RUNTIME_DIR")
 
 
+# Never handed to engine processes, whatever the platform.
+SECRET_ENV = ("ENCRYPTION_KEY", "GEMINI_API_KEY", "PAYMENT_PROVIDER_TOKEN")
+IS_WINDOWS = os.name == "nt"
+
+
+def is_native(cfg):
+    """True when engines run as plain processes (Windows) rather than under Wine."""
+    return not cfg.wine_cmd
+
+
+def engine_env(cfg, environ):
+    """Base environment for an engine process, without any of the worker's secrets."""
+    if is_native(cfg):
+        # Windows programs need SYSTEMROOT, TEMP, APPDATA, ...; pass everything except secrets.
+        return {k: v for k, v in environ.items() if k not in SECRET_ENV}
+    return {k: environ[k] for k in PASSTHROUGH_ENV if k in environ}
+
+
 def to_win(path):
     return "Z:" + os.path.abspath(path).replace("/", "\\")
 
@@ -250,26 +268,30 @@ class WorkerManager:
             os.replace(log_path, log_path + ".1")
         log_fh = open(log_path, "a", encoding="utf-8")
 
-        env = {k: os.environ[k] for k in PASSTHROUGH_ENV if k in os.environ}
+        native = is_native(self.cfg)
+        path_for_engine = os.path.abspath if native else to_win
+        env = engine_env(self.cfg, os.environ)
         env.update({
             "ACCOUNT_ID": str(aid),
             "MT5_LOGIN": acc["login"],
             "MT5_PASSWORD": decrypt(acc["password_enc"]),
             "MT5_SERVER": acc["server"],
-            "MT5_PATH": to_win(os.path.join(term, "terminal64.exe")),
+            "MT5_PATH": path_for_engine(os.path.join(term, "terminal64.exe")),
             "STRATEGY_JSON": json.dumps(strategy["spec"]),
             "ALLOW_REAL": "1" if acc["allow_real"] else "0",
             "BACKTEST_BARS": str(self.cfg.backtest_bars),
             "TELEGRAM_BOT_TOKEN": self.cfg.telegram_bot_token,
             "TELEGRAM_CHAT_ID": str(acc["user_id"]),
-            "STATUS_FILE": to_win(self._file(aid, "status.json")),
-            "CONTROL_FILE": to_win(control),
-            "APP_ROOT": to_win(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "STATUS_FILE": path_for_engine(self._file(aid, "status.json")),
+            "CONTROL_FILE": path_for_engine(control),
+            "APP_ROOT": path_for_engine(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "PYTHONIOENCODING": "utf-8",
         })
-        proc = subprocess.Popen(["wine", self.cfg.wine_python, self.cfg.engine_script],
+        group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if IS_WINDOWS
+                 else {"start_new_session": True})
+        proc = subprocess.Popen(self.cfg.wine_cmd + [self.cfg.wine_python, self.cfg.engine_script],
                                 cwd=self.client_dir(aid), env=env, stdout=log_fh,
-                                stderr=subprocess.STDOUT, start_new_session=True)
+                                stderr=subprocess.STDOUT, **group)
         with self.lock:
             self.procs[aid] = {"proc": proc, "log": log_fh, "started": time.time()}
         self.db.update_account(aid, last_error=None)
@@ -290,11 +312,14 @@ class WorkerManager:
                     entry["proc"].wait(STOP_GRACE_SECONDS)
                 except subprocess.TimeoutExpired:
                     try:
-                        os.killpg(entry["proc"].pid, signal.SIGKILL)
-                    except ProcessLookupError:
+                        if IS_WINDOWS:
+                            entry["proc"].kill()
+                        else:
+                            os.killpg(entry["proc"].pid, signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
                         pass
             # The MT5 terminal launched by the engine outlives it; kill it by its unique path.
-            subprocess.run(["pkill", "-f", rf"acc_{aid}[\\/]"], check=False)
+            self._kill_terminal(aid)
             with self.lock:
                 entry = self.procs.pop(aid, None)
             if entry:
@@ -302,6 +327,17 @@ class WorkerManager:
             log.info("stopped engine for account %s", aid)
         finally:
             self.stopping.discard(aid)
+
+    def _kill_terminal(self, aid):
+        """The MT5 terminal launched by the engine outlives it; kill it by its unique path."""
+        if IS_WINDOWS:
+            term = os.path.join(self.client_dir(aid), "terminal", "terminal64.exe")
+            ps = ("Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '%s' } | "
+                  "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" % term.replace("'", "''"))
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            subprocess.run(["pkill", "-f", rf"acc_{aid}[\\/]"], check=False)
 
     def stop_all(self):
         with self.lock:

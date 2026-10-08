@@ -41,7 +41,7 @@ HELP = (
     "keyin 24/7 savdo qiladi. Har bir ochilgan/yopilgan savdo haqida xabar keladi.\n\n"
     "<b>Misol:</b>\n<i>«H1 da EMA 9 EMA 21 ni pastdan kesib o'tsa va narx EMA 200 dan yuqori "
     "bo'lsa BUY, teskarisi SELL. SL 2 ATR, TP 1:2. Oltin va EURUSD.»</i>\n\n"
-    f"<b>Qo'llab-quvvatlanadi:</b> {SUPPORTED_SUMMARY}.\n\n"
+    f"<b>Qo'llab-quvvatlanadi:</b> {esc(SUPPORTED_SUMMARY)}.\n\n"
     "Buyruqlar: /menu — asosiy menyu, /status — botlar holati, /cancel — bekor qilish"
 )
 
@@ -278,7 +278,7 @@ class Bot:
             self.db.set_state(uid, "awaiting_strategy")
             items = "\n".join(f"• {esc(x)}" for x in res.unsupported) or "• —"
             return self.tg.send(uid, "😔 Bu strategiyaning asosiy qismini hozircha avtomatlashtira olmayman:\n"
-                                     f"{items}\n\n<b>Qo'llab-quvvatlanadi:</b> {SUPPORTED_SUMMARY}.\n\n"
+                                     f"{items}\n\n<b>Qo'llab-quvvatlanadi:</b> {esc(SUPPORTED_SUMMARY)}.\n\n"
                                      "Strategiyani shu indikatorlar bilan qayta yozib ko'ring.",
                                 kb([back("menu:templates", "📚 Tayyor shablonlar")]))
 

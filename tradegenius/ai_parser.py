@@ -8,6 +8,7 @@ engine can't execute is reported back to the user instead of being dropped.
 import base64
 import json
 import logging
+import time
 
 import requests
 
@@ -18,7 +19,8 @@ from .shared.strategy_schema import (SUPPORTED_SUMMARY, TIMEFRAMES, StrategyErro
 log = logging.getLogger(__name__)
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-FALLBACK_MODEL = "gemini-flash-latest"
+BUSY_STATUSES = (429, 500, 503)   # overloaded / rate limited: retry, then try the next model
+BUSY_RETRIES = 2
 
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 MAX_FILES = 5
@@ -65,6 +67,7 @@ operand = number
         | {{"ind": "MACD", "line": "macd" | "signal" | "hist", "fast": 12, "slow": 26, "signal": 9}}
         | {{"ind": "BB", "band": "upper" | "middle" | "lower", "period": 20, "std": 2}}
         | {{"ind": "STOCH", "line": "k" | "d", "k": 14, "d": 3, "smooth": 3}}
+        | {{"ind": "ADX", "line": "adx" | "plus_di" | "minus_di", "period": 14}}
 
 Supported: {SUPPORTED_SUMMARY}.
 
@@ -81,6 +84,9 @@ Rules:
   status "unsupported" and list them; if only a minor part is unsupported, build the rest with
   status "ok" and still list the dropped parts in unsupported_features.
 - Martingale, grid and averaging-down are never allowed.
+- Pine Script / MQL code: translate its entry filters faithfully (e.g. "adx > adxMin" =>
+  ADX line adx > number). Settings such as leverage caps, commission or pyramiding that the engine
+  cannot express go into unsupported_features, never silently dropped.
 - All human-readable text in Uzbek Latin script.
 """.strip()
 
@@ -96,7 +102,7 @@ class ParseResult:
         self.error = error
 
 
-def _call_gemini(user_text, files=(), timeout=90):
+def _call_gemini(user_text, files=(), timeout=60):
     parts = [{"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode()}}
              for mime, data in files]
     parts.append({"text": user_text})
@@ -106,16 +112,32 @@ def _call_gemini(user_text, files=(), timeout=90):
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
     }
     headers = {"x-goog-api-key": settings.gemini_api_key}
-    r = requests.post(GEMINI_URL.format(model=settings.gemini_model), json=body, timeout=timeout,
-                      headers=headers)
-    if r.status_code == 404 and settings.gemini_model != FALLBACK_MODEL:
-        # Configured model was retired; Google's rolling alias keeps the bot working meanwhile.
-        log.error("Gemini model %s not found, falling back to %s", settings.gemini_model, FALLBACK_MODEL)
-        r = requests.post(GEMINI_URL.format(model=FALLBACK_MODEL), json=body, timeout=timeout,
-                          headers=headers)
-    if r.status_code != 200:
-        raise RuntimeError(f"Gemini HTTP {r.status_code}: {r.text[:300]}")
-    data = r.json()
+    models = [settings.gemini_model] + [m for m in settings.gemini_fallback_models
+                                        if m != settings.gemini_model]
+    last = None
+    for model in models:
+        status = None
+        for attempt in range(BUSY_RETRIES):
+            try:
+                r = requests.post(GEMINI_URL.format(model=model), json=body, timeout=timeout,
+                                  headers=headers)
+            except requests.RequestException as e:
+                last, status = f"{model}: {type(e).__name__}", None
+                break  # slow or unreachable: move on to the next model instead of waiting again
+            status = r.status_code
+            if status == 200:
+                return _reply_text(r.json())
+            last = f"{model}: HTTP {status}: {r.text[:200]}"
+            if status not in BUSY_STATUSES:
+                break
+            time.sleep(2 * (attempt + 1))
+        if status is not None and status not in BUSY_STATUSES and status != 404:
+            raise RuntimeError(f"Gemini {last}")  # e.g. bad key: other models won't help
+        log.warning("Gemini %s unavailable (%s), trying next model", model, last[:120])
+    raise RuntimeError(f"All Gemini models unavailable, last: {last}")
+
+
+def _reply_text(data):
     cands = data.get("candidates") or []
     if not cands:
         raise RuntimeError(f"Gemini returned no candidates: {json.dumps(data)[:300]}")

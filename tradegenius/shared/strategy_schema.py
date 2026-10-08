@@ -30,6 +30,7 @@ Operands: a number, or one of
   {"ind": "MACD", "line": "macd|signal|hist", "fast": 12, "slow": 26, "signal": 9}
   {"ind": "BB", "band": "upper|middle|lower", "period": 20, "std": 2.0}
   {"ind": "STOCH", "line": "k|d", "k": 14, "d": 3, "smooth": 3}
+  {"ind": "ADX", "line": "adx|plus_di|minus_di", "period": 14}
 """
 
 import copy
@@ -41,7 +42,7 @@ TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
 OPS = ["<", ">", "<=", ">=", "crosses_above", "crosses_below"]
 PRICE_FIELDS = ["close", "open", "high", "low"]
 
-MAX_SYMBOLS = 10
+MAX_SYMBOLS = 20
 MAX_CONDITIONS = 8
 MAX_PERIOD = 500
 MAX_RISK_PERCENT = 5.0
@@ -63,6 +64,7 @@ INDICATORS = {
     },
     "BB": {"period": (int, 20, 2, 200), "std": (float, 2.0, 0.5, 5.0)},
     "STOCH": {"k": (int, 14, 2, 100), "d": (int, 3, 1, 20), "smooth": (int, 3, 1, 20)},
+    "ADX": {"period": (int, 14, 2, 100)},
 }
 
 # indicator -> (selector key, allowed values, default)
@@ -71,11 +73,12 @@ SELECTORS = {
     "MACD": ("line", ["macd", "signal", "hist"], "macd"),
     "BB": ("band", ["upper", "middle", "lower"], "middle"),
     "STOCH": ("line", ["k", "d"], "k"),
+    "ADX": ("line", ["adx", "plus_di", "minus_di"], "adx"),
 }
 
 SUPPORTED_SUMMARY = (
     "EMA, SMA, RSI, ATR, MACD (macd/signal/hist), Bollinger Bands (upper/middle/lower), "
-    "Stochastic (%K/%D), narx (open/high/low/close); solishtirish: <, >, <=, >=, "
+    "Stochastic (%K/%D), ADX (+DI/-DI), narx (open/high/low/close); solishtirish: <, >, <=, >=, "
     "kesib o'tish (crosses_above / crosses_below)"
 )
 
@@ -146,6 +149,8 @@ def operand_key(op):
         return f"BB_{op['period']}_{op['std']:g}_{op['band']}"
     if ind == "STOCH":
         return f"STOCH_{op['k']}_{op['d']}_{op['smooth']}_{op['line']}"
+    if ind == "ADX":
+        return f"ADX_{op['period']}_{op['line']}"
     raise StrategyError(f"noma'lum indikator {ind}")
 
 
@@ -293,6 +298,8 @@ def warmup_bars(strategy):
             need = max(need, op["period"])
         elif ind == "STOCH":
             need = max(need, op["k"] + op["d"] + op["smooth"])
+        elif ind == "ADX":
+            need = max(need, op["period"] * 6)  # double Wilder smoothing
     return need + 5
 
 
@@ -320,6 +327,8 @@ def describe_operand(op):
         return f"Bollinger({op['period']},{op['std']:g}) {op['band']}"
     if ind == "STOCH":
         return f"Stochastic({op['k']},{op['d']},{op['smooth']}) %{op['line'].upper()}"
+    if ind == "ADX":
+        return {"adx": "ADX", "plus_di": "+DI", "minus_di": "-DI"}[op["line"]] + f"({op['period']})"
     return ind
 
 

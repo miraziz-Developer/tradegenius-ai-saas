@@ -1,6 +1,8 @@
 """Runtime settings, read once from environment variables. See .env.example."""
 
 import os
+import shlex
+import sys
 
 
 def _bool(name, default=False):
@@ -29,7 +31,10 @@ class Settings:
         self.encryption_key = os.getenv("ENCRYPTION_KEY", "").strip()
 
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+        # Tried in order when the main model is overloaded or retired.
+        self.gemini_fallback_models = [m.strip() for m in os.getenv(
+            "GEMINI_FALLBACK_MODELS", "gemini-3.7-flash,gemini-3.5-flash").split(",") if m.strip()]
 
         # Billing is OFF while testing: everyone uses the cloud bot for free.
         # Admins are always free, even after billing is switched on.
@@ -43,15 +48,22 @@ class Settings:
         # While testing, optionally restrict the bot to an allowlist of users.
         self.allowed_user_ids = _ids("ALLOWED_USER_IDS")
 
-        self.data_dir = os.getenv("DATA_DIR", "/data")
+        # On Windows the engine runs natively (no Wine): same Python, same machine as MT5.
+        windows = os.name == "nt"
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        self.data_dir = os.getenv("DATA_DIR", os.path.join(repo, "data") if windows else "/data")
         self.max_active_engines = _int("MAX_ACTIVE_ENGINES", 3)
         self.max_accounts_per_user = _int("MAX_ACCOUNTS_PER_USER", 1)
         self.backtest_bars = _int("BACKTEST_BARS", 3000)
 
-        # Wine / MT5 locations inside the worker container.
-        self.wine_python = os.getenv("WINE_PYTHON", r"C:\Python311\python.exe")
-        self.mt5_base_dir = os.getenv("MT5_BASE_DIR", "")  # set by entrypoint
-        self.engine_script = os.getenv("ENGINE_SCRIPT", r"Z:\app\engine\engine.py")
+        # Wine / MT5 locations. An empty WINE_CMD means native Windows. On macOS it can point at
+        # CrossOver: '/Applications/CrossOver.app/.../bin/wine --bottle TradeGenius'.
+        self.wine_cmd = shlex.split(os.getenv("WINE_CMD", "" if windows else "wine"), posix=not windows)
+        self.wine_python = os.getenv("WINE_PYTHON", sys.executable if windows else r"C:\Python311\python.exe")
+        self.mt5_base_dir = os.getenv("MT5_BASE_DIR", r"C:\Program Files\MetaTrader 5" if windows else "")
+        self.engine_script = os.getenv("ENGINE_SCRIPT", os.path.join(repo, "engine", "engine.py")
+                                       if windows else r"Z:\app\engine\engine.py")
         self.engines_enabled = _bool("ENGINES_ENABLED", True)
         self.setup_failed = _bool("SETUP_FAILED", False)
         self.ai_daily_limit = _int("AI_DAILY_LIMIT", 20)   # strategy analyses per user per day

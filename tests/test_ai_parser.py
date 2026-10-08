@@ -55,22 +55,36 @@ def test_files_are_sent_inline_and_unsupported_mime_dropped(monkeypatch):
     assert sent["body"]["generationConfig"]["responseMimeType"] == "application/json"
 
 
-def test_retired_model_falls_back_to_alias(monkeypatch):
+class Status:
+    def __init__(self, code):
+        self.status_code, self.text = code, f"HTTP {code}"
+
+
+def _gemini(monkeypatch, replies):
     urls = []
 
-    class NotFound:
-        status_code = 404
-        text = "model not found"
-
     def fake_post(url, json=None, timeout=None, headers=None):
-        urls.append(url)
-        return NotFound() if len(urls) == 1 else FakeResp(GOOD)
+        urls.append(url.split("/models/")[1].split(":")[0])
+        return replies[len(urls) - 1]
 
     monkeypatch.setattr(ai_parser.settings, "gemini_api_key", "k")
-    monkeypatch.setattr(ai_parser.settings, "gemini_model", "gemini-old")
+    monkeypatch.setattr(ai_parser.settings, "gemini_model", "main")
+    monkeypatch.setattr(ai_parser.settings, "gemini_fallback_models", ["backup1", "backup2"])
     monkeypatch.setattr(ai_parser.requests, "post", fake_post)
+    monkeypatch.setattr(ai_parser.time, "sleep", lambda s: None)
+    return urls
+
+
+def test_busy_model_is_retried_then_next_model_used(monkeypatch):
+    urls = _gemini(monkeypatch, [Status(503), Status(503), Status(404), FakeResp(GOOD)])
     assert parse_strategy("RSI 30 dan past bo'lsa BUY").status == "ok"
-    assert "gemini-old" in urls[0] and ai_parser.FALLBACK_MODEL in urls[1]
+    assert urls == ["main", "main", "backup1", "backup2"]
+
+
+def test_bad_key_does_not_cycle_models(monkeypatch):
+    urls = _gemini(monkeypatch, [Status(403)] * 6)
+    assert parse_strategy("RSI 30 dan past bo'lsa BUY").status == "error"
+    assert set(urls) == {"main"}
 
 
 def test_too_large_files_rejected(monkeypatch):

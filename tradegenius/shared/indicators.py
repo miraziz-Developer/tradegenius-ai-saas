@@ -42,6 +42,25 @@ def atr(df, n):
     return out
 
 
+def adx(df, n):
+    """Wilder's ADX with +DI/-DI (same as MT5 / TradingView ta.dmi)."""
+    up = df["high"].diff()
+    down = -df["low"].diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    prev = df["close"].shift(1)
+    tr = pd.concat([df["high"] - df["low"], (df["high"] - prev).abs(), (df["low"] - prev).abs()],
+                   axis=1).max(axis=1)
+    atr_ = _rma(tr, n).replace(0, np.nan)
+    plus_di = 100 * _rma(plus_dm, n) / atr_
+    minus_di = 100 * _rma(minus_dm, n) / atr_
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    out = {"adx": _rma(dx.fillna(0), n), "plus_di": plus_di, "minus_di": minus_di}
+    for s in out.values():
+        s.iloc[:2 * n] = np.nan
+    return out
+
+
 def compute_operand(df, op):
     ind = op["ind"]
     c = df["close"]
@@ -69,6 +88,8 @@ def compute_operand(df, op):
         raw_k = 100 * (c - lo) / (hi - lo).replace(0, np.nan)
         k = raw_k.rolling(op["smooth"]).mean()
         return k if op["line"] == "k" else k.rolling(op["d"]).mean()
+    if ind == "ADX":
+        return adx(df, op["period"])[op["line"]]
     raise ValueError(f"unknown indicator {ind}")
 
 

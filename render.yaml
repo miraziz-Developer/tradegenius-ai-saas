@@ -22,7 +22,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.8-flash
       - key: AI_DAILY_LIMIT
         value: "20"
       - key: BILLING_ENABLED
